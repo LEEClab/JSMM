@@ -479,7 +479,7 @@ for (i in 1: npost){ #for each iteration
     T1[pdit,nt] &lt;- min(mass)
     T1[pdit,pdit] &lt;- 1
   }
-  pre &lt;- T1 %*% POST_ZT[ , , i]
+  pre &lt;- T1 %*% Post_Z[ , , i]
   for (k in 1: length(comb)){
     dif[k,,i] &lt;- pre[comb[2, k], ] - pre[comb[1, k], ]
   }
