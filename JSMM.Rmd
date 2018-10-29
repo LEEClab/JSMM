@@ -1,0 +1,535 @@
+---
+title: "JSMM-Rcode"
+author: "Otso Ovaskainen, Danielle Leal Ramos, Eleanor M. Slade, Thomas Merckx, Gleb Tikhonov, Juho Pennanen, Marco Aurélio Pizo, Milton Cezar Ribeiro, and Juan Manuel Morales"
+date: "July, 2018"
+output: html_document
+---
+
+This is a demonstration of the Joint Species Movement Model, applied for data on birds movement in a heterogeneous landscape.
+
+The script uses the following packages:
+
+```{r, eval = FALSE}
+## Required packages
+if (!require("MCMCpack")) install.packages("MCMCpack") # for function riwish
+if (!require("mvtnorm")) install.packages("mvtnorm") # for functions dmvnorm and rmvnorm
+```
+
+First, we organize the landscape data, which consists of a matrix with one value for each landscape cell: $1$ for pasture (open areas), $2$ for semi-open (narrow corridors of trees, single trees, and small group of trees outside forest patches), and $3$ for forest habitat. We transform this into two indicator variables ($h_j^1$ and $h_j^2$ in the main text) for semi-open and forest habitats respectively.
+
+```{r, eval = FALSE}
+habitat <- read.table("type_pa.csv", sep = ",")
+s <- numeric(length(habitat$V1))
+f <- numeric(length(habitat$V1))
+s[which(habitat$V1 == 2)] <- 1
+f[which(habitat$V1 == 3)] <- 1
+```
+
+We generate a matrix $d$ of the Euclidean distances between cells in the landscape (in tens of meters).
+
+```{r, eval = FALSE}
+xp <- rep(c(1:60), 60)        # x coordinates
+yp <- rep(c(60:1), each = 60) # y coordinates
+xv <- cbind(xp, yp)
+d  <- unname(as.matrix(dist(xv, upper = TRUE, diag = TRUE)) )
+```
+
+Now, we read the bird species data: the movement tracks, the species traits and the phylogenetic correlation matrix.
+
+The first column (SPS) of the track data contains the species name, the second column (TID) holds the track identification number, and the third (TA) contains the sequence of used landscape cells. We included only species with traits and phylogenetic correlation values, and only tracks inside the landscape and with at least two resting cells (i.e. at least one "move").
+
+```{r, eval = FALSE}
+tracks <- read.table("tracks.csv", sep = ",", header = TRUE)
+
+## Phylogenetic correlation matrix (optional)
+CC <- read.table("CC.csv", sep = ",", header = FALSE)
+CC <- apply(CC, FUN = as.numeric, MARGIN = 1)
+
+## Species traits (optional)
+ttraits <- read.table("traits.csv", sep = ",", header = TRUE)
+
+TT <- matrix(0, nrow = nrow(ttraits), ncol = length(unique(ttraits[ , 2])) + 1) # contains the traits (columns) for each species (rows). Cathegorical traits are converted to binomial variables.
+
+colpos = as.numeric(ttraits[ , 2])
+
+for(i in 1:nrow(TT)){
+  TT[i, colpos[i]] = 1 
+}
+
+TT[ , ncol(TT)] <- log(ttraits[ , 3]) # Log body mass
+
+## Note: the sequence of species in TT and CC matrix need to be the same, and the parameters of all species described in TT and CC will be estimated.
+```
+
+Finally, we build a list, $data$, with all useful environmental and species information.
+
+```{r, eval = FALSE}
+data <- list(
+  
+  SP = ttraits[ ,1], # vector with species names
+  ns = length(ttraits[ ,1]), # number of species
+  CC = CC,
+  TT = TT,
+  tracks = tracks,
+  
+  semiopen = s,
+  forest = f,
+  d = d,
+  
+  includeTraits = TRUE, # change to FALSE to not include species traits in the model
+  includePhylogeny = TRUE, # change to FALSE to not include species phylogeny in the model
+  
+  np = 3, # number of species-specific parameters to be estimated
+  parameternames = c("log distance", "semiopen_aff", "forest_aff") # names of species-specific parameters to be estimated
+
+)
+```
+
+To fit the movement model to the data, first we define the log-likelihood function. Here, we use a simple step-selection model. This function should be adapted to be used for other movement data, keeping two groups of arguments: (1) the vector $theta$ with the species-specific parameters to be tested; (2) the $data$, which should include species movement data, and the environmental covariates ($h_j^1$, $h_j^2$, and $d$, in this case).
+
+```{r, eval = FALSE}
+## Likelihood function with three arguments: vector theta with species-specific parameters, species movement data (tracks), and environmental covariates (s, f, d).
+
+loglik <- function(THETA,data){
+  
+  # bird movement data
+  all.tracks <- data$tracks
+  SPS <- all.tracks[,1]
+  SP  <- data$SP
+  ns <- length(SP)
+  
+  #environmental covariates
+  semiopen <- data$semiopen
+  forest <- data$forest
+  d <- data$d
+  
+  like<-rep(0, ns)
+  
+  for (k in 1: ns) {
+    theta <- THETA[k, ]
+    tracks <- all.tracks[SPS == SP[k],]
+    
+    alpha <- exp(theta[1])
+    beta_s   <- theta[2]
+    beta_f   <- theta[3]
+    li    <- 0
+    
+    idt <- tracks[ ,2]
+    uid <- unique(idt)
+    ta <- tracks[ ,3]
+    
+    for(ss in 1: length(uid)){ #for each one of the tracks
+      lta <- ta[idt == uid[ss]] #data for the focal track
+      
+      for(i in 1: (length(lta)-1)) { #for each movement step
+        x <- lta[i]
+        pr <- exp(-d[x,]/alpha) * exp(beta_s * semiopen) * exp(beta_f * forest)
+        pr <- pr / sum(pr)
+        pr <- pr + 10^(-10)
+        pr <- pr / sum(pr)
+        li <- li + log(pr[lta[i + 1]])
+      }
+    }
+    like[k]<-li
+  }
+  return(like)
+}
+
+```
+
+Now we build the JSMM function. 
+
+We define the prior distributions for all parameters. For the matrix **Z**, which measures the influence of the species-specific traits to the movement parameters, we use a multivariate normal distribution with zero mean and an identity matrix as the variance-covariance: $\text{vec} \left( \mathbf{Z} \right) \sim N \left( \mu_z = \mathbf{0}, \Sigma_z = \mathbb{I} \right)$. The prior for the the residual variation $\mathbf{\Sigma}$ is an Inverse-Wishart distribution, $\mathbf{\Sigma} \sim W^{-1}\left( \mathbf{\Psi} , \nu  \right)$ with the degrees of freedom set to the number of parameters ($\nu = n_p$) and the scale matrix $\mathbf{\Psi}$ set to the identity matrix. For $\rho$ we used a uniform distribution between $0$ and $1$ discretized into $100$ values and we pre-computed the determinants and inverse of the variance-covariance matrices used in the conditional sampling (see MCMC below). If the user wants to use different prior distributions, they need to be changed in the funtion body (below).
+
+To fit the model to the data, we developed a Markov chain Monte Carlo (MCMC) sampling scheme that uses a Metropolis-Hastings step to sample the species-specific parameters Theta, whereas the parameters Zeta, Sigma and rho are sampled directly from their full conditional distribution.
+
+```{r, eval = FALSE}
+trunca <- function(x) min(max(x, 10^-5), 10^5) # required function to run the JSMM function below
+
+jsmm.mcmc <- function(loglikelihood = loglik, data = data, n.iter = n.iter, n.adapt.iter = iter, n.thin = 1, rotate = TRUE){
+  
+  # The following objects should be changed to use different prior distributions: mu_z, S_z, PSI, nu, rhos, priorRho
+
+  tpm0 <- proc.time() #initial processing time
+  
+  ## First, we separate some variables from the "data" list
+  ns <- data$ns # number of studied species
+  np <- data$np # number of species-specific parameters
+  SP <- data$SP # sequence of studied species
+  includePhylogeny <- data$includePhylogeny
+  includeTraits <- data$includeTraits
+  CC <- data$CC # Phylogenetic correlation matrix
+  TT <- data$TT # Species traits matrix
+  
+  ## And, then, we set up some variables and prior distributions.
+  
+  ## To include the intercept into the model, we set TT[,1] <- 1 for all species. In the absence of trait information, only the intercept is included.
+  if(!includeTraits){
+    TT <- matrix(1, nrow = ns)
+    nt <- 1
+    colnames(TT) <- "intercept"
+  }
+
+  if(includeTraits){
+    TT <- TT
+    nt <- ncol(TT)
+    # traits <- colnames(TT)
+  }
+ 
+  ## Prior distributions:
+  
+  ## Zeta
+  mu_z <- matrix(0, nrow = np * nt)
+  S_z  <- 100 * diag(np * nt)
+
+  ## Sigma
+  PSI <- diag(np)
+  nu  <- np
+
+  ## Rho
+  ## Pre-compute inverse and determinant of the D-matrix
+
+  if(includePhylogeny){
+  
+    rhos <- seq(0, 1, 0.01)
+    nr   <- length(rhos)
+    # priorRho  <- rep(1/nr, nr)
+    priorRho <- rep(0.5/(nr - 1), nr)
+    priorRho[1] <- 0.5
+    lpriorRho <- log(priorRho)
+    iWs <- array(dim = c(ns, ns, nr))
+    ldetWs <- numeric(nr)
+  
+    for(i in 1: nr){
+      W <- rhos[i] * CC + (1 - rhos[i]) * diag(ns)
+      iWs[ , , i] <- solve(W)
+      ldetWs[i]   <- log(det(as.matrix(W)))
+    }
+  }
+  
+  ## Before running the MCMC we set initial values for the
+  ## parameters to be estimated: Theta, Sigma, Zeta, and rho.
+  
+  if (is.null(data$THETAINIT)){
+    Theta <- matrix(0,nrow = ns,ncol=np)
+  } else {
+    Theta <- data$THETAINIT # this ns x np matrix should be added to the data list in order to use initial values different from 0
+  }
+  
+  Sigma  <- diag(np)  # identity matrix
+  iSI <- solve(Sigma) # inverse of matrix Sigma
+  Z   <- matrix(0, nrow = nt, ncol = np)
+  M   <- TT %*% Z   # mu_k; expected values of THETA
+  X   <- TT %x% diag(np)  
+  
+  if(includePhylogeny){
+    RI <- round(nr/2)
+    rho <- rhos[RI]
+    iW <- iWs[ , ,RI]
+    ldetW <- ldetWs[RI]
+  }
+
+  if(!includePhylogeny){
+    rho <- 1
+    iW <- diag(ns)
+    # ldetW <- log(det(diag(ns)))
+  }
+  
+  ## Initial likelihoods for THETA
+  
+  li1 <- loglik(Theta, data)
+ 
+  RES <- as.numeric(t(M)) - as.numeric(t(Theta))
+  li2 <- -(1/2) * RES %*% kronecker(iW, iSI) %*% RES
+  
+  print("inital log-likelihood: ")
+  print(c(li1,li2))
+  print("sampling starts")
+  
+  ## Acceptance rates
+  
+  ac <- array(0, c(ns, np, 2))
+  kk <- array(1, c(ns, np)) # sd for the proposal distributions
+  acr <- array(NA, c(ns, np))
+  
+  ns1s2 <- array(0, c(ns))
+  s1 <- array(0, c(ns, np))
+  s2 <- array(0, c(ns, np, np))
+  la <- array(1, c(ns, np))
+  vect <- array(0, c(ns, np, np))
+  
+  for (k in 1:ns){
+    vect[k,,] <- diag(np)
+  }
+  
+  ## Posteriors to be stored
+  Post_Theta <- array(NA, c(n.iter, ns, np))
+  Post_Z <- array(NA, c(n.iter, nt, np))
+  Post_Sigma <- array(NA, c(n.iter, np, np))
+  Post_rho <- numeric(n.iter)
+  Post_LIKE <- array(NA, c(n.iter, ns))
+  
+  ##  MCMC sampling scheme
+  
+  for (i in 1:(n.iter + n.adapt.iter)){
+    
+    print(i)
+    
+    for (ii in 1:n.thin){
+      
+      ## UPDATE THETA
+      
+      for (l in 1:np){
+        
+        NTHETA <- Theta ###
+        
+        for(k in 1:ns){
+          
+          nTHETA <- Theta[k, ]
+          mult <- rnorm(1, mean=0, sd = (kk[k,l]*sqrt(la[k,l])))
+         
+          for (l2 in 1:np){
+            
+            nTHETA[l2] <- nTHETA[l2] + mult*vect[k,l,l2]
+            
+          }
+          
+          NTHETA[k, ] <- nTHETA
+        }
+        
+        nli1 <- loglik(NTHETA, data)
+          
+        for (k in 1:ns){
+          
+          N2THETA <- Theta 
+          N2THETA[k,] <- NTHETA[k,]
+          RES <- as.numeric(t(M)) - as.numeric(t(N2THETA))
+          nli2 <- -(1/2) * RES %*% kronecker(iW, iSI) %*% RES
+          ac[k,l,1] <- ac[k,l,1] + 1
+
+          if(is.finite(nli1[k]) & is.finite(nli2)){
+            
+            if(runif(1) < exp(nli1[k] - li1[k] + nli2 - li2)){
+              
+              Theta[k,] <- NTHETA[k,]
+              li1[k] <- nli1[k]
+              li2 <- nli2
+              ac[k,l,2] <- ac[k,l,2] + 1
+              
+            }
+          }
+        }
+      }
+      
+      ## The other parameters are sampled directly from their full conditional distribution 
+  
+      ## UPDATE Z
+  
+      XTHE <- as.vector(t(Theta)) # transform to vector by line
+      iXSI <- iW %x% iSI
+      Vs <- solve(solve(S_z) + t(X) %*% iXSI %*% X)
+      Vs <- (Vs + t(Vs))/2
+      mus <- Vs %*% (solve(S_z) %*% mu_z + t(X) %*% iXSI %*% XTHE)
+      # set.seed(42)
+      Z <- matrix(rmvnorm(1, mean = mus, sigma = Vs), ncol = np, byrow = TRUE)
+      M <- TT %*% Z
+  
+      ## UPDATE Sigma
+  
+      RES <- Theta - M
+      A <- t(RES) %*% iW %*% RES
+      PSIA <- PSI + A
+      PSIA <- (PSIA + t(PSIA))/2
+      ##set.seed(42)
+      Sigma <- riwish((nu+ns), PSIA) # Inverse Wishart Matrix Distribution
+      Sigma <- (Sigma + t(Sigma))/2
+      iSI <- solve(Sigma)
+  
+      ## UPDATE rho
+      
+      if(includePhylogeny){
+        RES <- as.numeric(t(M)) - as.numeric(t(Theta))
+        likeRho <- numeric(nr)
+        
+        for(ii in 1:nr){
+          likeRho[ii] <- (-1/2)*(np*ldetWs[ii] + RES%*%(iWs[,,ii] %x% iSI)%*%RES)
+        }
+        
+        postRho <- lpriorRho + likeRho
+        pr <- exp(postRho)/sum(exp(postRho))
+        RI <- sample(seq(1:nr), size = 1, prob = pr)
+        iW <- iWs[,,RI]
+        ldetW <- ldetWs[RI]
+        rho <- rhos[RI]
+        
+        RES <- as.numeric(t(M)) - as.numeric(t(Theta))
+        li2 <- -(1/2) * RES %*% kronecker(iW, iSI) %*% RES
+      }
+      
+      ## Adaptation
+      
+      if (i <= n.adapt.iter){
+        
+        for(k in 1:ns){
+          
+          q <- 1 + exp(-(i*n.thin)/500)
+          w <- 1 - 0.1*exp(-(i*n.thin)/500)
+          acr[k,] <- ac[k,,2]/ac[k,,1]
+          kk[k,] <- sapply(kk[k,] * q^(acr[k,] - 0.44), trunca)
+          s1[k,] <- s1[k,]+w*Theta[k,]
+          s2[k,,] <- s2[k,,]+w*(Theta[k,]%*%t(Theta[k,]))
+          ns1s2[k] <- ns1s2[k]+w
+          
+          if (rotate && ((i*n.thin)>50)){
+            cov <- (s2[k,,]-(s1[k,]%*%t(s1[k,])/ns1s2[k]))/(ns1s2[k]-1)
+            met <- cov + 10^(-5)*diag(np)
+            lavect <- eigen(met)
+            la[k,] <- abs(lavect$values)
+            vect[k,,] <- lavect$vectors
+          }
+          
+        }
+        
+        ac = ac*w
+        
+      }
+      
+    } # END OF THINNING LOOP
+    
+    ## Store the posteriors
+    
+    if(i > n.adapt.iter) {
+      
+      Post_Theta[i-n.adapt.iter,,] <- Theta
+      Post_Z[i-n.adapt.iter,,] <- Z
+      Post_Sigma[i-n.adapt.iter,,] <- Sigma
+      Post_rho[i-n.adapt.iter] <- rho
+      Post_LIKE[i-n.adapt.iter,] <- li1
+      
+    }
+    
+  }
+  
+  tpm1 <- proc.time() #final time
+  
+  ## Organizing outputs
+  
+  dtpm <- (tpm1[3] - tpm0[3])/60 # time elapsed
+  
+  rnames_summary <- c("Time elapsed (minutes):", "Total number of iterations:",
+                      "Number of adaptation iterations:","Length of thinned posterior",
+                      "Number of species", "Number of parameters", "Number of traits")
+  results_summary <- matrix(c(as.numeric(dtpm), (n.iter+n.adapt.iter)*n.thin, n.adapt.iter*n.thin, n.iter, ns, np, nt),
+                            dimnames = list(rnames_summary,"Model summary"))
+  
+  posterior <- list(THETA = Post_Theta, ZETA = Post_Z, SIGMA = Post_Sigma, RHO = Post_rho, LIKE = Post_LIKE)
+  
+  return(list(results_summary = results_summary, posterior = posterior, la = la, vect = vect, ac = ac, kk = kk))
+  
+}
+      
+```
+
+We can now run the functions above to calculate the posterior values of the parameters.
+
+```{r, eval = FALSE}
+output <- jsmm.mcmc(loglikelihood = loglik, data = data, n.iter = 100, n.adapt.iter = 10, n.thin = 5, rotate = TRUE)
+```
+
+## Results
+
+Here, we organize a summary of the MCMC sampling scheme output and provide the code of the Figure 1 of the manuscript, with the influence of species traits on species-specific movement parameters. The panels show the posterior mean (dot) and 95% credibility intervals of the movement parameters describing the mean movement distance $\log \mathbf{\alpha_k}$ (left),  affinity to semi-open habitat $\mathbf{\beta^s_k}$ (center), and affinity to forest $\mathbf{\beta^f_k}$ (right) for each species k. The continuous lines show the posterior mean prediction of expected movement parameters based on species traits. The colors indicate omnivorous (green), granivorous (blue), frugivorous (black), and insectivorous birds (red). The dashed horizontal line in panels B and C shows the zero lines, thus values above the line correspond to birds that prefer corridor or forest habitats more than open habitats.
+
+```{r, eval = FALSE}
+
+## Figure 1. Influence of species traits on species-specific movement parameters
+
+mass <- TT[,5]
+tgroup <- ttraits[,2]
+meZT <- apply(Post_Z,FUN = mean, MARGIN=1:2) # means for the posterior values of Zeta
+
+tiff(filename="fig2.tif", res=300, unit="cm", height=10, width=30)
+par(mfrow = c(1,3), oma=c(0,0,0,0),mar=c(5,5,3,1))
+
+for (k in 1: np){
+
+  me <- rowMeans(Post_Theta[,k,])
+  lo <- apply(Post_Theta[,k,], MARGIN = 1,FUN = quantile, probs = 0.25)
+  hi <- apply(Post_Theta[,k,], MARGIN = 1,FUN = quantile, probs = 0.75)
+
+  if (k == 1) {plot(1, type="n", xlab="", ylab="",
+              xlim=c(2, 6),
+              ylim=c(-0.5, 2),
+              cex=2.5,xaxt="n",yaxt="n",
+              bty="n")
+  } else {plot(1, type="n", xlab="", ylab="",
+             xlim=c(2, 6),
+             ylim=c(-0.5, 5.5),
+             cex=2.5,xaxt="n",yaxt="n",
+             bty="n")}
+  box(bty="o", col="gray35")
+  axis(1,cex.axis=1.6, col = "gray35",col.axis="gray35", las = 1,tck=-0.01,mgp = c(2, 0.5, 0),
+       lwd = 1,at = seq(2,6,1))
+  axis(2, cex.axis = 1.6, col = "gray35", col.axis="gray35", las = 1, tck=-0.01, mgp = c(3, 0.4, 0), lwd = 1)
+  title(xlab ="log body mass (g)", line = 2.3,cex.lab=2)
+  title(ylab = parameters[k], line = 2.5,cex.lab=2)
+  if (k > 1) abline(h=0, lty=5,col = "gray35")
+
+  for(i in 1: length(unique(tgroup))) {
+
+    pdit = unique(tgroup)[i]
+
+    T1 <- matrix(0,ncol=nt, nrow=2)
+    T1[1, nt] <- min(mass)
+    T1[2, nt] <- max(mass)
+    T1[1, pdit] <- 1
+    T1[2, pdit] <- 1
+    pre <- T1 %*% meZT
+    lines(pre[,k] ~ c(min(mass), max(mass)), col = as.numeric(pdit))
+
+    points(me[tgroup == pdit] ~ mass[tgroup == pdit], pch = 16, col = as.numeric(pdit))
+    segments(mass[tgroup == pdit], lo[tgroup == pdit],mass[tgroup == pdit], hi[tgroup == pdit], col = as.numeric(pdit))
+    ## colors: black (frugivorous); red (insectivorous); green (omnivorous); blue (granivorous)
+  }
+
+}
+
+dev.off()
+```
+
+We also compare the estimated parameters between each pair of feeding classes by calculating the probability for one feeding class having a higher parameter value than the other feeding class (measured as the difference in the Zeta parameters being either positive or negative).
+
+```{r, eval = FALSE}
+## Posterior probability of differences between feeding classes
+
+dif <- array(NA,c(6,np,npost))
+comb <- data.frame(c(1,2),c(1,3),c(1,4),c(2,3),c(2,4),c(3,4))
+
+for (i in 1: npost){ #for each iteration
+  T1 <- matrix(0, ncol = nt, nrow = length(unique(tgroup)))
+  for (k in 1: length(unique(tgroup))){
+    pdit <- unique(tgroup)[k]
+    T1[pdit,nt] <- min(mass)
+    T1[pdit,pdit] <- 1
+  }
+  pre <- T1 %*% POST_ZT[ , , i]
+  for (k in 1: length(comb)){
+    dif[k,,i] <- pre[comb[2, k], ] - pre[comb[1, k], ]
+  }
+}
+
+dif[which(dif > 0)] <- 1
+dif[which(dif < 0)] <- 0
+
+postpr <- matrix(nrow = 6, ncol = np)
+for (i in 1: length(comb)){
+  postpr[i, ] <- rowSums(dif[i, , ])
+}
+
+postpr <- postpr/npost
+colnames(postpr) <- parameters
+rownames(postpr) <- c("ins-frug","omn-frug","grn-frug","omn-ins","grn-ins","grn-omn")
+
+write.table(postpr, file="posteriors_probability.csv", sep=",")
+```
+
