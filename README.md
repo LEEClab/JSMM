@@ -6,6 +6,6 @@ Abstract. Joint species distribution modelling has enabled researchers to move f
 
 We provide here the code for the JSMM (JSMM.Rmd), which consists mainly of one likelihood function and a MCMC sampling scheme with a Metropolis-Hastings step. We also provide a dataset on bird movement in a heterogeneous landscape in Brazil to demonstrate the model – the sequence of movement steps of 43 bird species, their traits and phylogenetic relationship, and the landscape covariates. The code estimates the movement parameters posteriors and their convergence, and produces a figure to show the influence of species traits on species-specific parameters.  
   
-The JSMM can be used for many kinds of movement models and movement data by adapting the likelihood function, which should use 3 inputs: the species movement data, the environmental covariates, and the parameters to be sampled. We illustrate it with a simple step-selection model.  
+The JSMM can be used for many kinds of movement models and movement data by adapting the likelihood function, which should use 3 inputs: the species movement data, the environmental covariates, and the parameters to be sampled. We illustrate it with a simple step-selection model to describe bird movement.  
   
 The code is in the JSMM.html file. Use the link to view the rendered version here: http://htmlpreview.github.io/?https://github.com/LEEClab/JSMM/blob/master/JSMM.html.
