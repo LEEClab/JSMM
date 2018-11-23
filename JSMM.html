@@ -232,7 +232,7 @@ loglik &lt;- function(THETA,data){
 }</code></pre>
 <p>Now we build the JSMM function.</p>
 <p>We define the prior distributions for all parameters. For the matrix <strong>Z</strong>, which measures the influence of the species-specific traits to the movement parameters, we use a multivariate normal distribution with zero mean and an identity matrix as the variance-covariance: <span class="math inline">\(\text{vec} \left( \mathbf{Z} \right) \sim N \left( \mu_z = \mathbf{0}, \Sigma_z = \mathbb{I} \right)\)</span>. The prior for the the residual variation <span class="math inline">\(\mathbf{\Sigma}\)</span> is an Inverse-Wishart distribution, <span class="math inline">\(\mathbf{\Sigma} \sim W^{-1}\left( \mathbf{\Psi} , \nu \right)\)</span> with the degrees of freedom set to the number of parameters (<span class="math inline">\(\nu = n_p\)</span>) and the scale matrix <span class="math inline">\(\mathbf{\Psi}\)</span> set to the identity matrix. For <span class="math inline">\(\rho\)</span> we used a uniform distribution between <span class="math inline">\(0\)</span> and <span class="math inline">\(1\)</span> discretized into <span class="math inline">\(100\)</span> values and we pre-computed the determinants and inverse of the variance-covariance matrices used in the conditional sampling (see MCMC below). If the user wants to use different prior distributions, they need to be changed in the funtion body (below).</p>
-<p>To fit the model to the data, we developed a Markov chain Monte Carlo (MCMC) sampling scheme that uses a Metropolis-Hastings step to sample the species-specific parameters Theta, whereas the parameters Zeta, Sigma and rho are sampled directly from their full conditional distribution.</p>
+<p>To fit the model to the data, we developed a Markov chain Monte Carlo (MCMC) sampling scheme that uses a Metropolis-Hastings step to sample the species-specific parameters Theta, whereas the parameters Zeta, Sigma and rho are sampled directly from their full conditional distribution. The scheme includes rotation of the proposal space based on the eigenvectors of the posterior sampled thus far (for those parameters that can’t be sampled directly from their full conditional distributions).</p>
 <pre class="r"><code>trunca &lt;- function(x) min(max(x, 10^-5), 10^5) # required function to run the JSMM function below
 
 jsmm.mcmc &lt;- function(loglikelihood = loglik, data = data, n.iter = n.iter, n.adapt.iter = iter, n.thin = 1, rotate = TRUE){
@@ -326,7 +326,7 @@ jsmm.mcmc &lt;- function(loglikelihood = loglik, data = data, n.iter = n.iter, n
   
   ## Initial likelihoods for THETA
   
-  li1 &lt;- loglik(Theta, data)
+  li1 &lt;- loglikelihood(Theta, data)
  
   RES &lt;- as.numeric(t(M)) - as.numeric(t(Theta))
   li2 &lt;- -(1/2) * RES %*% kronecker(iW, iSI) %*% RES
@@ -386,7 +386,7 @@ jsmm.mcmc &lt;- function(loglikelihood = loglik, data = data, n.iter = n.iter, n
           NTHETA[k, ] &lt;- nTHETA
         }
         
-        nli1 &lt;- loglik(NTHETA, data)
+        nli1 &lt;- loglikelihood(NTHETA, data)
           
         for (k in 1:ns){
           
