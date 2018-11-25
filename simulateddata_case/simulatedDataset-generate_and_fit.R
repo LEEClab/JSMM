@@ -144,27 +144,27 @@ registerDoParallel(cl)
    
 tpm <- foreach(repl = 1:15, .export = c('loglik'), .packages = c('Matrix','mvtnorm','MCMCpack')) %dopar%
    {
-      for (mm in c(10,100)) {
-         for (nn in c(10,100)) { 
-
-            ## REPLICATE MODELS (WITH DATA GENERATED WITH LINEAR AND NON-LINEAR MODELS) FITTED TO LINEAR MODEL
-
-            load(file = paste("bird_data_L_", toString(repl), "n_", toString(nn), "m_", toString(mm), ".Rdata", sep = ""))
-            data$TT <- data$TT[ , c(1, 2, 3)]
-            
-            out <- jsmm.mcmc(loglikelihood = loglik, data = data, n.iter = 100, n.adapt.iter = 10, n.thin = 5, rotate = TRUE)
-            outfile <- paste("bird_posterior_1000_200_1_", toString(repl), "n_", toString(nn), "m_", toString(mm), ".Rdata", sep="")
-            save(out, file = outfile)
-            
-            ## REPLICATE MODELS (WITH DATA GENERATED WITH LINEAR AND NON-LINEAR MODELS) FITTED TO NON-LINEAR MODEL
-
-            for (nl in FALSE){#c(FALSE,TRUE)){
-               load(file = paste("bird_data_", if(nl){"NL_"}else{"L_"}, toString(repl), "n_", toString(nn), "m_", toString(mm), ".Rdata", sep = ""))
-               out <- jsmm.mcmc(loglikelihood = loglik, data = data, n.iter = 100, n.adapt.iter = 10, n.thin = 5, rotate = TRUE)
-               outfile <- paste("bird_posterior_1000_200_1_",if(nl){"NL_"} else{"L_"}, toString(repl), "n_", toString(nn), "m_", toString(mm), ".Rdata", sep="")
-               save(out, file = outfile)
-            }
-         }
+  for (mm in c(10,100)) {
+    for (nn in c(10,100)) { 
+      
+      ## REPLICATE MODELS (WITH DATA GENERATED WITH LINEAR AND NON-LINEAR MODELS) FITTED TO LINEAR MODEL
+      
+      load(file = paste("bird_data_L_", toString(repl), "n_", toString(nn), "m_", toString(mm), ".Rdata", sep = ""))
+      data$TT <- data$TT[ , c(1, 2, 3)]
+      
+      out <- jsmm.mcmc(loglikelihood = loglik, data = data, n.iter = 100, n.adapt.iter = 10, n.thin = 5, rotate = TRUE)
+      outfile <- paste("bird_posterior_1000_200_1_", toString(repl), "n_", toString(nn), "m_", toString(mm), ".Rdata", sep="")
+      save(out, file = outfile)
+      
+      ## REPLICATE MODELS (WITH DATA GENERATED WITH LINEAR AND NON-LINEAR MODELS) FITTED TO NON-LINEAR MODEL
+      
+      for (nl in FALSE){#c(FALSE,TRUE)){
+        load(file = paste("bird_data_", if(nl){"NL_"}else{"L_"}, toString(repl), "n_", toString(nn), "m_", toString(mm), ".Rdata", sep = ""))
+        out <- jsmm.mcmc(loglikelihood = loglik, data = data, n.iter = 100, n.adapt.iter = 10, n.thin = 5, rotate = TRUE)
+        outfile <- paste("bird_posterior_1000_200_1_",if(nl){"NL_"} else{"L_"}, toString(repl), "n_", toString(nn), "m_", toString(mm), ".Rdata", sep="")
+        save(out, file = outfile)
       }
-   }
+    }
+  }
+}
 stopCluster(cl)
