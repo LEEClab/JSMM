@@ -3,10 +3,10 @@
 ## Testing the validity of the posterior sampling scheme with simulated datasets ##
 ###################################################################################
 
-## authors: "Otso Ovaskainen, Danielle Leal Ramos, Eleanor M. Slade, Thomas Merckx, Gleb Tikhonov, Juho Pennanen, Marco Aurélio Pizo, Milton Cezar Ribeiro, and Juan Manuel Morales"
+## authors: "Otso Ovaskainen, Danielle Leal Ramos, Eleanor M. Slade, Thomas Merckx, Gleb Tikhonov, Juho Pennanen, Marco AurÃ©lio Pizo, Milton Cezar Ribeiro, and Juan Manuel Morales"
 ## date: "November, 2018"
 
-## 1. Before running the code below, please set the working directory to the folder containing files: .
+## 1. Before running the code below, please set the working directory to a folder containing all the files downloaded from the "simulateddata_case" folder.
 
 ## 2. Required packages & functions
 
@@ -37,7 +37,7 @@ for (repl in 1:100){ # to create replicates
       zeta <- matrix(c(-2, 1, 0.5, 0, 0, 0, 0.5, 0, 0, 2, 0, 0), nrow = 4, ncol = 3) # true parameter if movement distance is assumed to behave linearly with body size
     }
 
-    T <- cbind(1, frugivore, lbody, lbody2) # n×3 trait matrix;columns correspond to intercept (all values set to one), an indicator variable describing if the species is a frugivore (with value one) or not (with value zero), log-body size, and squared log-body size
+    T <- cbind(1, frugivore, lbody, lbody2) # nÃ—3 trait matrix;columns correspond to intercept (all values set to one), an indicator variable describing if the species is a frugivore (with value one) or not (with value zero), log-body size, and squared log-body size
     mu <- T %*% zeta
     var <- c("log distance", "affinity to semi-open areas", "forest affininity")
     PC <- diag(n)
